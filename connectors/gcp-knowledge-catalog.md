@@ -1,226 +1,293 @@
-# Connector: Google Cloud Knowledge Catalog (via `kcmd`)
+# Publishing an OKF bundle to Google Cloud Knowledge Catalog
 
-**Status:** design note. Describes a working prototype and the gaps between it
-and a connector we would be willing to call v1.
+How to push an OKF bundle into a [Google Cloud Knowledge Catalog][kc] EntryGroup
+and pull it back as clean OKF, using **`kcmd`** — the Metadata-as-Code CLI in
+[`toolbox/mdcode`][mdcode] of the `knowledge-catalog` repo.
 
-This document covers moving OKF bundles into and out of [Google Cloud Knowledge
-Catalog][kc] (renamed from Dataplex Universal Catalog; IAM identifiers still use
-the `dataplex.*` prefix) using **`kcmd`**, the Metadata-as-Code CLI and library
-that lives in [`toolbox/mdcode`][mdcode] of the `knowledge-catalog` repo.
-
-OKF is deliberately vendor-neutral (SPEC.md §1). Nothing here is normative for
-the format — this is one connector among many possible ones, and the mapping
-choices below are the connector's, not the spec's.
+Read [Known limitations](#known-limitations) before using this on a bundle you
+care about. Some OKF frontmatter does not survive a round-trip today.
 
 [kc]: https://docs.cloud.google.com/dataplex/docs/catalog-overview
 [mdcode]: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode
 
-## Why the two models don't line up
+## How it works
 
-| | OKF bundle | Knowledge Catalog |
-|---|---|---|
-| Unit | A `.md` file with YAML frontmatter | An **entry** in an **EntryGroup** |
-| Structure | Directory hierarchy; graph via markdown links | Flat entries under a group; relationships are not first-class |
-| Typing | `type:` is a freeform string, not centrally registered (§4.1) | Entry types are registered resources (`dataplex-types.global.generic`, …) |
-| Extra fields | Any producer-defined key; consumers preserve unknown keys (§4.1, §11) | **Aspects** — typed records, schema declared up front |
-| Source of truth | Git | The catalog service |
+`kcmd` syncs a local directory against the catalog: a `catalog.yaml` manifest
+names a scope, `catalog/` holds the snapshot, and `kcmd pull` / `kcmd push`
+move it. Its generic Documents Layout maps one markdown file to one entry, with
+the body stored on the `dataplex-types.global.overview` aspect.
 
-`kcmd` already bridges the filesystem-to-service half of this: a `catalog.yaml`
-manifest names a scope, `catalog/` holds a snapshot, and `kcmd pull` / `kcmd
-push` sync it. It ships a generic **Documents Layout** that maps a tree of
-markdown files to entries.
+That layout carries only `title`, `description`, `tags`, and the body. OKF's
+signal layer (`type`, `resource`, `generated`, `sources`, …) has no home in it,
+so you declare a **custom `okf` aspect type** and move the signal there.
 
-The mismatch that drives this connector's whole design: the Documents Layout
-carries only `title` / `description` / `tags` plus the body. **OKF's signal
-layer — `type`, `resource`, `generated`, `verified`, `sources`, `status`,
-`stale_after` — has no generic home in it.** That signal layer is the
-interesting part of OKF; a connector that drops it is just a markdown uploader.
+Because `kcmd` expects that signal in a `catalogEntry:` block rather than as
+top-level OKF frontmatter, you translate each file into a "pushable" form in a
+throwaway `.staging/` tree, push from there, and delete it. Your `catalog/`
+directory stays clean OKF and remains readable by every other OKF tool.
 
-## How the prototype works
+```
+catalog/            .staging/catalog/          Knowledge Catalog
+clean OKF     ──►   pushable form       ──►    entries + aspects
+  (git)             (throwaway)                (service)
+              ◄──                       ◄──
+```
 
-Prototype lives at [`toolbox/mdcode/demo/okf/`][demo] and round-trips a 14-file
-GA4 bundle. The shape is worth keeping.
+## Prerequisites
+
+- A GCP project with the BigQuery and Dataplex APIs enabled.
+- `gcloud`, authenticated for application default credentials.
+- [Bun](https://bun.sh) or Node, to run the translation scripts.
+
+```bash
+export PROJECT=<your-project-id>
+export LOCATION=us-central1
+export ENTRY_GROUP=okf_demo
+
+gcloud auth application-default login
+gcloud config set project $PROJECT
+```
+
+Build the CLI (it is not yet published as a binary):
+
+```bash
+git clone https://github.com/GoogleCloudPlatform/knowledge-catalog
+cd knowledge-catalog/toolbox/mdcode
+npm install && npm run build      # produces dist/kcmd
+```
+
+## Step 1 — Create the EntryGroup
+
+```bash
+gcloud dataplex entry-groups create $ENTRY_GROUP \
+  --project $PROJECT --location $LOCATION
+```
+
+## Step 2 — Create the `okf` aspect type
+
+Save this as `okf-aspect.json`. It holds the OKF signal fields that the generic
+layout cannot carry.
+
+```json
+{
+  "name": "okf",
+  "type": "record",
+  "recordFields": [
+    { "index": 1, "name": "okf_type", "type": "string",
+      "annotations": { "displayName": "OKF Type",
+        "description": "The OKF document type (freeform, e.g. 'BigQuery Table').",
+        "search": { "retrievable": true } } },
+    { "index": 2, "name": "generated", "type": "record",
+      "recordFields": [
+        { "index": 1, "name": "by", "type": "string",
+          "annotations": { "displayName": "Generated By" } },
+        { "index": 2, "name": "at", "type": "string",
+          "annotations": { "displayName": "Generated At" } }
+      ],
+      "annotations": { "displayName": "Generated",
+        "description": "Provenance of the document content." } },
+    { "index": 3, "name": "sources", "type": "array",
+      "arrayItems": { "name": "source", "type": "record",
+        "recordFields": [
+          { "index": 1, "name": "id", "type": "string",
+            "annotations": { "displayName": "Source ID" } },
+          { "index": 2, "name": "resource", "type": "string",
+            "constraints": { "required": true },
+            "annotations": { "displayName": "Resource" } },
+          { "index": 3, "name": "title", "type": "string",
+            "annotations": { "displayName": "Title" } }
+        ] },
+      "annotations": { "displayName": "Sources",
+        "description": "Attribution sources for the document content." } }
+  ],
+  "annotations": { "displayName": "OKF Signal",
+    "description": "Open Knowledge Format signal layer." }
+}
+```
+
+```bash
+gcloud dataplex aspect-types create okf \
+  --metadata-template-file-name=okf-aspect.json \
+  --project $PROJECT --location $LOCATION
+```
+
+If you extend the aspect (see [Known limitations](#known-limitations)), keep the
+`index` values stable — Dataplex keys record fields by index.
+
+## Step 3 — Write the manifest
+
+`catalog.yaml`, next to your `catalog/` directory:
+
+```yaml
+scope: kb.<project>.<location>.<entryGroup>
+snapshot:
+  entries:
+    - dataplex-types.global.generic
+  aspects:
+    - dataplex-types.global.generic
+    - dataplex-types.global.overview
+    - <project>.<location>.okf
+publishing:
+  entries:
+    - dataplex-types.global.generic
+  aspects:
+    - dataplex-types.global.generic
+    - dataplex-types.global.overview
+    - <project>.<location>.okf
+```
+
+Substitute your real values; the `kb.` prefix on `scope` is required.
+
+Entry type is always `dataplex-types.global.generic`. OKF `type` values are
+freeform strings (SPEC §4.1), not Dataplex type references, so the real value
+lives on the aspect instead.
+
+## Step 4 — Add your bundle
+
+Copy the bundle so its root is `catalog/`:
+
+```bash
+cp -R /path/to/bundle/. catalog/
+```
+
+Entry names come from file paths: `references/metrics/purchasers.md` becomes
+entry `references/metrics/purchasers`.
+
+## Step 5 — Translate and push
+
+Copy [`okf.ts`, `push.ts`, and `pull.ts`][demo] from the demo. `okf.ts` does the
+frontmatter translation; `push.ts` stages every `.md` file through it and then
+shells out to `dist/kcmd push`.
 
 [demo]: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode/demo/okf
 
-**A custom `okf` aspect type carries the signal.** Rather than teaching `kcmd`
-about OKF, the connector declares a Dataplex aspect type (`okf-aspect.json`)
-and moves the signal fields into it, passed through the Documents Layout's
-`catalogEntry:` block. `kcmd` stays generic; all OKF knowledge lives in the
-connector. **This is the right split and should be preserved.**
+```bash
+bun push.ts
+```
 
-**A throwaway staging tree keeps on-disk files clean.** `catalog/` is pure OKF.
-`push.ts` translates each file into the "pushable" form under `.staging/`, runs
-the real `kcmd push` there, and deletes it. `pull.ts` is the inverse. So the
-git-tracked bundle never acquires catalog-shaped scaffolding, and the same
-bundle stays consumable by every other OKF tool.
+The transformation, so you can reimplement it in another language. Clean OKF on
+disk:
 
-**The mapping today:**
+```yaml
+---
+type: Reference
+resource: https://support.google.com/analytics/answer/9037342
+title: Purchasers Audience Metric
+description: Computes the count or list of users who have completed a purchase.
+tags: [metric, ga4]
+generated: { by: reference_agent/gemini-3.5-flash, at: 2026-07-10T21:16:12+00:00 }
+sources:
+  - id: sample_queries
+    resource: https://support.google.com/analytics/answer/9037342
+    title: Sample queries for audiences based on BigQuery data
+---
+```
+
+The same file staged for `kcmd`:
+
+```yaml
+---
+title: Purchasers Audience Metric
+description: Computes the count or list of users who have completed a purchase.
+tags: [metric, ga4]
+catalogEntry:
+  resource:
+    name: https://support.google.com/analytics/answer/9037342
+  aspects:
+    <project>.<location>.okf:
+      okf_type: Reference
+      generated: { by: reference_agent/gemini-3.5-flash, at: 2026-07-10T21:16:12+00:00 }
+      sources:
+        - id: sample_queries
+          resource: https://support.google.com/analytics/answer/9037342
+          title: Sample queries for audiences based on BigQuery data
+---
+```
+
+`title`, `description`, and `tags` stay top-level; `resource` moves to
+`catalogEntry.resource.name`; `type` becomes `okf_type`; `generated` and
+`sources` move onto the aspect. The body is untouched. Emit keys in a fixed
+order so round-trips produce stable diffs.
+
+`index.md` files carry no frontmatter (SPEC §8) and pass through as body-only
+entries.
+
+## Step 6 — Verify the round-trip
+
+```bash
+bun pull.ts
+git diff --exit-code catalog/
+```
+
+A pull immediately after a push should leave `catalog/` byte-identical. A
+non-empty diff means the translation is lossy for something in your bundle —
+check it against the limitations below before pushing anything further.
+
+## Step 7 — Clean up
+
+```bash
+gcloud dataplex entry-groups delete $ENTRY_GROUP --project $PROJECT --location $LOCATION
+gcloud dataplex aspect-types delete okf --project $PROJECT --location $LOCATION
+```
+
+## Frontmatter mapping
 
 | OKF | Knowledge Catalog |
 |---|---|
-| Bundle root | EntryGroup — scope `kb.<project>.<location>.<entryGroup>` |
-| File path `references/metrics/purchasers.md` | Entry `references/metrics/purchasers` |
-| Markdown body | `dataplex-types.global.overview` aspect content |
+| Bundle root | EntryGroup |
+| File path | Entry name |
+| Markdown body | `dataplex-types.global.overview` aspect |
 | `title`, `description`, `tags` | Documents Layout native fields |
 | `resource` | `catalogEntry.resource.name` |
 | `type` | `okf` aspect → `okf_type` |
 | `generated` | `okf` aspect → `generated {by, at}` |
 | `sources` | `okf` aspect → `sources[] {id, resource, title}` |
-| `index.md` (no frontmatter, §8) | Body-only entry, no OKF signal |
+| everything else | **dropped** — see below |
 
-Entry type is always `dataplex-types.global.generic`. This is correct and not a
-shortcut: OKF `type` values are freeform strings like `BigQuery Table` or
-`Attested Computation` (§4.1) and are not Dataplex type references, so the real
-value has to live on the aspect regardless.
+## Known limitations
 
-## What's missing
+**Signal fields are dropped.** The aspect above covers three of roughly ten OKF
+signal fields. Lost on every round-trip: `verified` (§5.2) — so trust tiers
+(§5.3) collapse and every concept reads as *unverified* in the catalog —
+`status` (§5.4), `stale_after` (§5.5), the per-source credibility signals
+`author` / `usage_count` / `last_modified` (§5.1), and the computation contract
+fields (§10). Extend `okf-aspect.json` and the translation to cover what your
+bundle actually uses.
 
-Everything below is a gap in the prototype, not in `kcmd`.
+**Unknown keys are dropped.** The translation works from an allowlist, so
+producer-defined keys do not survive, even though §4.1 asks consumers to
+preserve them. Add a catch-all field to the aspect if you need them.
 
-### 1. The aspect covers three signal fields out of roughly ten
+**Cross-links break.** OKF bodies link with bundle-relative or relative paths
+(§6.1). Those strings are stored verbatim and resolve to nothing in the catalog
+UI, so the bundle graph flattens into disconnected documents. Nothing rewrites
+them. Do not "fix" this by rewriting links in your source bundle — the relative
+form is what makes bundles render on GitHub.
 
-`okf-aspect.json` models `okf_type`, `generated`, and `sources{id, resource,
-title}`. Silently dropped on every round-trip:
+**Renames destroy catalog-side state.** Entry identity is the file path, so
+renaming a file deletes one entry and creates another, discarding anything the
+catalog accumulated against the old one.
 
-- **`verified`** (§5.2) — a list of `{by, at}` events. This is the input to
-  trust tiers (§5.3), so without it every concept in the catalog reads as
-  *unverified* and the human-reviewed / machine-confirmed distinction is gone.
-  The most damaging omission of the set.
-- **`status`** (§5.4) — `draft` / `stable` / `deprecated`. A deprecated concept
-  is indistinguishable from a current one in the catalog.
-- **`stale_after`** (§5.5) — the staleness date.
-- **Source credibility signals** (§5.1) — `author`, `usage_count`,
-  `last_modified` on each entry, plus the `usage_window` sibling. The
-  connector's `pick()` allowlist keeps only `id` / `resource` / `title`.
-- **Computation contract fields** (§10) for Attested Computation concepts.
+**Deletes leave orphans.** Removing a file does not remove its entry. Prune by
+hand.
 
-Extending `okf-aspect.json` to cover the full v0.2 signal layer is mechanical
-and should happen before anyone relies on this. Note `verified` needs the
-bare-mapping-means-one-element-list rule (§5.2, §11).
+**There is no merge story.** `kcmd push` only pushes changes since the last pull
+and refuses if the catalog moved underneath. With bundles in git you have two
+writable copies and no way to reconcile them. Treat git as authoritative and the
+catalog as a projection: push on merge to main, and do not pull into a tracked
+bundle.
 
-### 2. Unknown keys are dropped, which the spec says they shouldn't be
+**Anyone with a basic role on the project can read the whole EntryGroup.**
+Knowledge Catalog has no entry-level access control — policies attach to entry
+groups and above, and everything you push inherits the entry group's access.
+`roles/viewer` on the hosting project is a full catalog reader and a strict
+superset of `roles/dataplex.catalogViewer`, additionally carrying
+`entryGroups.export` (bulk metadata dump) and `entries.getData`. This is not
+"public by default," but it does mean a bundle is readable and bulk-exportable
+by every project viewer. Push into a project with no basic-role grants, grant
+`roles/dataplex.catalogViewer` per entry group, and check what your concept
+names, column names, and prose disclose before pushing.
 
-§4.1: *"Consumers SHOULD preserve unknown keys when round-tripping."* The
-`pick()` allowlist means a producer-defined key survives `push` → `pull` only
-if the connector was taught about it. A bundle that goes through the catalog
-and back comes out lossy in a way a plain `git diff` will show.
-
-Options, roughly in order of preference:
-
-1. A catch-all `extra` field on the `okf` aspect holding serialized JSON of
-   unrecognized frontmatter keys. Ugly, lossless, cheap.
-2. Treat git as authoritative and never pull into a tracked bundle (see §5
-   below), which makes the loss unobservable rather than fixed.
-3. Accept the loss and document it. Only defensible if the catalog is a
-   read-only projection.
-
-### 3. Cross-links break in the catalog
-
-OKF bodies link with bundle-relative (`/tables/events_.md`) or relative
-(`../tables/events_.md`) paths (§6.1). Those strings are stored verbatim on the
-overview aspect and resolve to nothing in the catalog UI — the bundle graph,
-which is a good part of what makes OKF worth having, silently flattens into
-disconnected documents. Nothing in `mdcode` rewrites links (confirmed by
-grepping `src/`).
-
-Since the file-path-to-entry-name mapping is deterministic, push could rewrite
-each link to the target entry, and pull could invert it. The catch is that
-inverting reliably means knowing which links the connector wrote, so this
-probably wants a marker or a link table on the aspect. Worth designing rather
-than bolting on.
-
-Do **not** solve this by rewriting links in the source bundle — §6.1's relative
-form is deliberate, and it is what makes bundles render correctly on GitHub
-([`4c40ef1`][commit] in the source repo exists precisely for that).
-
-[commit]: https://github.com/GoogleCloudPlatform/knowledge-catalog/commit/4c40ef1
-
-### 4. Entry identity is the file path, so renames destroy catalog state
-
-Entry name derives from file path. Rename `metrics/revenue.md` →
-`metrics/revenue-ytd.md` and the connector deletes one entry and creates
-another. Anything the catalog accumulated against the old entry — aspects
-applied out-of-band, tags, references from other systems — is gone, and OKF has
-no opinion about it because in a bundle a rename is just a rename.
-
-If bundles are expected to churn, entries need a stable identifier that
-survives a move. That likely means a connector-owned id minted on first push
-and stored both on the aspect and in the file (which puts a catalog-specific
-key into clean OKF — a real cost, worth weighing against the alternative).
-
-Related and unresolved: **deleting a file does not delete its entry.** Orphans
-accumulate. Push needs a reconciliation pass, ideally behind a flag, since
-"delete everything not in my local tree" is a dangerous default.
-
-### 5. Two writable sources of truth, no merge story
-
-`kcmd push` only pushes changes since the last pull and refuses if the catalog
-moved underneath. That is sound for a catalog-first workflow. But OKF bundles
-live in git and are edited by agents and humans through pull requests, so we
-have two writable copies and a conflict rule that can only say *stop*.
-
-The cleanest answer, and the recommended default: **git is authoritative; the
-catalog is a projection.** Push on merge to main, never pull into a tracked
-bundle. Discoverability and search in the catalog, review and history in git —
-each side does what it is good at.
-
-Bidirectional editing should be an explicit opt-in mode, and it needs a real
-design: which side wins per field, whether catalog edits open a pull request
-instead of landing directly, and what happens when an agent regenerates a
-document that a human edited in the catalog UI. Not something to leave implied.
-
-### 6. Access control is a deployment decision, not a detail
-
-Knowledge Catalog has **no entry-level access control**. Policies attach to
-entry groups, entry types, aspect types, glossaries, and project/folder/org.
-Anything pushed onto an entry inherits the entry group's access.
-
-The consequence worth stating plainly to anyone adopting this: `roles/viewer`
-on the hosting project is a full catalog reader, and it is a *superset* of
-`roles/dataplex.catalogViewer` — it additionally carries `entryGroups.export`
-(bulk metadata dump) and `entries.getData`. So a bundle pushed into a project
-where basic roles are handed out is readable, and bulk-exportable, by everyone
-holding one.
-
-To be precise rather than alarmist: this is not "public by default." It is
-"visible to anyone with a basic role on the project," which makes it a project
-hygiene question. But basic-role grants are common enough that broad visibility
-is the default outcome unless someone chose otherwise.
-
-Practical guidance: push bundles into a project with no basic-role grants, grant
-`roles/dataplex.catalogViewer` per entry group, and decide deliberately before
-pushing a bundle whose concept names, column names, or prose you would not show
-to every project viewer. Bundle *content* is the disclosure surface here — data
-values are not involved.
-
-### 7. Scale is untested
-
-14 files. Real bundles run to hundreds, and `bundles/stackoverflow/` in this
-repo is already 30+. Push is per-file with no batching or concurrency, and
-Dataplex has per-request and per-minute quotas. Someone should run a
-thousand-document bundle before this is load-bearing.
-
-## Recommended shape for v1
-
-1. Extend `okf-aspect.json` to the full v0.2 signal layer, plus a catch-all for
-   unknown keys. Mechanical, unblocks everything else.
-2. Ship **one-way, git-authoritative push** first. It sidesteps merge semantics
-   and the unknown-key problem entirely, and covers the discoverability use
-   case that motivates this connector.
-3. Add orphan reconciliation behind an explicit flag.
-4. Design link rewriting and stable entry identity properly, together — they
-   interact.
-5. Treat bidirectional sync as a separate project with its own design doc.
-
-## Open questions
-
-- Should one EntryGroup hold one bundle, or should several bundles share a group
-  with a path prefix? The prototype assumes one-to-one; multi-tenancy is
-  unexplored.
-- Do OKF Attested Computations (§10) map onto anything native in the catalog, or
-  do they stay opaque aspect payloads?
-- Should `okf_version` (§12) from the bundle-root `index.md` be recorded on the
-  EntryGroup so consumers can tell which spec revision produced the entries?
-- Is `okf-aspect.json` per-project, or should there be one shared, published
-  aspect type so bundles from different producers are queryable together?
+**Scale is untested.** The demo is 14 files. Push is per-file with no batching,
+and Dataplex enforces per-request and per-minute quotas. Test before running a
+bundle of several hundred documents.
