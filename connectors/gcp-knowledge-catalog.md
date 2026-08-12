@@ -3,8 +3,7 @@
 Push an OKF bundle into a [Knowledge Catalog][kc] EntryGroup and pull it back as
 clean OKF, using **`kcmd`** from [`toolbox/mdcode`][mdcode].
 
-Read [Limitations](#limitations) first. Seven frontmatter keys survive the
-round-trip; anything else your bundle uses is dropped.
+Read [Limitations](#limitations) first.
 
 [kc]: https://docs.cloud.google.com/dataplex/docs/catalog-overview
 [mdcode]: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode
@@ -89,7 +88,8 @@ Two diffs are expected and are not translation loss:
 - A document with `resource:` and no `title:` comes back with `title:` set to
   the resource URI.
 
-Any other diff is lossy. Check it against the limitations below.
+Any other diff is a key the translation doesn't carry. See
+[Limitations](#limitations).
 
 ## 7. Clean up
 
@@ -99,19 +99,11 @@ bun cleanup.ts
 
 ## Limitations
 
-- **Seven frontmatter keys are covered.** `title`, `description` and `tags`
-  become native entry fields, `resource` becomes `catalogEntry.resource.name`,
-  and `type`, `generated` and `sources` go on the `okf` aspect. The GA4 demo
-  bundle uses exactly these seven, so it round-trips with no loss — which is
-  why nothing looks lossy when you try it.
-- **Everything else is dropped**, including keys §4.1 asks consumers to
-  preserve. OKF's own `bundles/acme_retail` uses eight more: `verified`,
-  `status`, `stale_after`, `attester`, `executor`, `parameters`, `runtime`,
-  `usage_window`. Losing `verified` (§5.2) collapses trust tiers (§5.3), so
-  every concept reads as unverified. Per-source `author` / `usage_count` /
-  `last_modified` (§5.1) go too. Check your own bundle's keys against the seven
-  above before assuming a clean round-trip, and extend `okf-aspect.json` and
-  `okf.ts` to cover the rest, keeping existing `index` values stable.
+- **Seven frontmatter keys are carried**, plus the markdown body. `title`,
+  `description` and `tags` become native entry fields, `resource` becomes
+  `catalogEntry.resource.name`, and `type`, `generated` and `sources` go on the
+  `okf` aspect. To carry more, add fields to `okf-aspect.json` and `okf.ts`,
+  keeping existing `index` values stable.
 - **Cross-links resolve to nothing.** Relative paths (§6.1) are stored verbatim.
   Don't rewrite them in your source — the relative form is what renders on
   GitHub.
