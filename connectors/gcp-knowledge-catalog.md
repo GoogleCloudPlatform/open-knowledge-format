@@ -107,8 +107,8 @@ bun cleanup.ts
 - **Cross-links resolve to nothing.** Relative paths (§6.1) are stored verbatim.
   Don't rewrite them in your source — the relative form is what renders on
   GitHub.
-- **Tags must be valid Dataplex label keys.** Each becomes a label set to
-  `"true"`; uppercase or spaces are rejected by the service.
+- **Tags become entry labels set to `"true"`**, and only labels with that exact
+  value are read back as tags. Dataplex caps label keys at 128 characters.
 - **Renames orphan catalog state, deletes leave entries behind**, and there is
   no merge story. Treat git as authoritative: push on merge, don't pull into a
   tracked bundle.
