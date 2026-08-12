@@ -3,7 +3,8 @@
 Push an OKF bundle into a [Knowledge Catalog][kc] EntryGroup and pull it back as
 clean OKF, using **`kcmd`** from [`toolbox/mdcode`][mdcode].
 
-Read [Limitations](#limitations) first. The round-trip is lossy today.
+Read [Limitations](#limitations) first. Seven frontmatter keys survive the
+round-trip; anything else your bundle uses is dropped.
 
 [kc]: https://docs.cloud.google.com/dataplex/docs/catalog-overview
 [mdcode]: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode
@@ -98,13 +99,19 @@ bun cleanup.ts
 
 ## Limitations
 
-- **Most of the signal layer is dropped.** The `okf` aspect carries `type`,
-  `generated`, and `sources`. `verified` (SPEC §5.2) is not among them, so trust
-  tiers (§5.3) collapse and every concept reads as unverified. Also lost:
-  `status`, `stale_after`, per-source credibility (§5.1), and the computation
-  fields (§10). Extend `okf-aspect.json` and `okf.ts` to cover what you use,
-  keeping existing `index` values stable.
-- **Unknown keys are dropped**, despite §4.1 asking consumers to preserve them.
+- **Seven frontmatter keys are covered.** `title`, `description` and `tags`
+  become native entry fields, `resource` becomes `catalogEntry.resource.name`,
+  and `type`, `generated` and `sources` go on the `okf` aspect. The GA4 demo
+  bundle uses exactly these seven, so it round-trips with no loss — which is
+  why nothing looks lossy when you try it.
+- **Everything else is dropped**, including keys §4.1 asks consumers to
+  preserve. OKF's own `bundles/acme_retail` uses eight more: `verified`,
+  `status`, `stale_after`, `attester`, `executor`, `parameters`, `runtime`,
+  `usage_window`. Losing `verified` (§5.2) collapses trust tiers (§5.3), so
+  every concept reads as unverified. Per-source `author` / `usage_count` /
+  `last_modified` (§5.1) go too. Check your own bundle's keys against the seven
+  above before assuming a clean round-trip, and extend `okf-aspect.json` and
+  `okf.ts` to cover the rest, keeping existing `index` values stable.
 - **Cross-links resolve to nothing.** Relative paths (§6.1) are stored verbatim.
   Don't rewrite them in your source — the relative form is what renders on
   GitHub.
