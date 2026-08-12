@@ -80,15 +80,14 @@ and aspect type to compare against.
 
 ```bash
 cd demo/okf
-bun setup.ts     # EntryGroup okf_ga4 + okf aspect type + catalog.yaml
+bun setup.ts
 bun push.ts
 bun pull.ts
 git diff --exit-code catalog/    # should be empty
 bun cleanup.ts
 ```
 
-The rest of this document explains what those scripts do, so you can point them
-at your own bundle.
+The rest of this document is how to do the same thing with your own bundle.
 
 ## Step 1 — Create the EntryGroup
 
@@ -96,10 +95,6 @@ at your own bundle.
 gcloud dataplex entry-groups create $ENTRY_GROUP \
   --project $PROJECT --location $LOCATION
 ```
-
-If you adapt the demo's `setup.ts` instead of running this by hand, note that
-it hardcodes the EntryGroup name `okf_ga4` and reads `okf-aspect.json` from the
-current directory.
 
 ## Step 2 — Create the `okf` aspect type
 
@@ -157,10 +152,9 @@ If you extend the aspect (see [Known limitations](#known-limitations)), keep the
 `kcmd init --kb <project>.<location>.<entryGroup>` will generate a
 `catalog.yaml`, but it writes only the `scope:` line — and a manifest with no
 `snapshot.entries` fails on push with `Unknown entry type
-dataplex-types.global.generic in snapshot`. Write the file yourself instead.
-(The demo's `setup.ts` generates it, which is worth doing too if you script
-setup: the `okf` aspect key contains the project and location, so hand-editing
-it is a place to get them wrong.)
+dataplex-types.global.generic in snapshot`. Write the file yourself instead —
+or better, generate it, since the `okf` aspect key embeds the project and
+location and is easy to get wrong by hand.
 
 `catalog.yaml`, next to your `catalog/` directory:
 
@@ -221,10 +215,7 @@ entry `references/metrics/purchasers`.
 
 ## Step 5 — Translate and push
 
-Copy [`okf.ts`, `push.ts`, and `pull.ts`][demo] from the demo. `okf.ts` does the
-frontmatter translation; `push.ts` copies `catalog.yaml` and every `.md` file
-through it into `.staging/`, shells out to `dist/kcmd push` with `.staging/` as
-the working directory, then deletes the tree. `pull.ts` is the inverse.
+Copy [`okf.ts`, `push.ts`, and `pull.ts`][demo] from the demo.
 
 [demo]: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode/demo/okf
 
