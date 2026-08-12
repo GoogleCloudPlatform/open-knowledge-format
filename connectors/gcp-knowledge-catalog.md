@@ -37,7 +37,9 @@ clean OKF     ──►   pushable form       ──►    entries + aspects
 
 - A GCP project with the BigQuery and Dataplex APIs enabled.
 - `gcloud`, authenticated for application default credentials.
-- [Bun](https://bun.sh) or Node, to run the translation scripts.
+- [Bun](https://bun.sh). Required, not optional — `kcmd`'s build compiles the
+  binary with `bun build --compile`, and the translation scripts are run with
+  `bun`.
 
 ```bash
 export PROJECT=<your-project-id>
@@ -116,6 +118,11 @@ If you extend the aspect (see [Known limitations](#known-limitations)), keep the
 
 ## Step 3 — Write the manifest
 
+`kcmd init --kb <project>.<location>.<entryGroup>` will generate a
+`catalog.yaml`, but it writes only the `scope:` line — and a manifest with no
+`snapshot.entries` fails on push with `Unknown entry type
+dataplex-types.global.generic in snapshot`. Write the file yourself instead.
+
 `catalog.yaml`, next to your `catalog/` directory:
 
 ```yaml
@@ -136,11 +143,31 @@ publishing:
     - <project>.<location>.okf
 ```
 
-Substitute your real values; the `kb.` prefix on `scope` is required.
+Substitute your real values. Four rules, each enforced by `kcmd`:
+
+- The `kb.` prefix on `scope` selects the Knowledge Base source, which is what
+  binds the EntryGroup to the Documents Layout.
+- **Every entry type you push must be listed in `snapshot.entries`.** Types are
+  resolved from that list alone; anything missing throws `Unknown entry type
+  <type> in snapshot`.
+- **`publishing` must be a subset of `snapshot`.** Listing an aspect or entry
+  type under `publishing` that is absent from `snapshot` is a load-time error
+  (`Publishing aspect type '<x>' is not listed in snapshot aspects`).
+- **Once `publishing` exists, any aspect not named in it is silently skipped on
+  push.** This is the easy one to get wrong: omit
+  `dataplex-types.global.overview` and every document body is dropped without
+  an error. Omit your `okf` aspect and the whole signal layer goes with it.
+
+`dataplex-types.global.generic` appears in both lists because it is the entry
+type *and* because `kcmd` always attaches the entry's own type aspect (Dataplex
+requires it on create) — so it has to be publishable too.
 
 Entry type is always `dataplex-types.global.generic`. OKF `type` values are
 freeform strings (SPEC §4.1), not Dataplex type references, so the real value
-lives on the aspect instead.
+lives on the aspect instead. One sharp edge: `kcmd` treats a top-level `type:`
+as a Dataplex entry type if and only if it has exactly three dot-separated
+segments, so an OKF type like `foo.bar.baz` would be misread as one. Anything
+else falls back to generic.
 
 ## Step 4 — Add your bundle
 
@@ -164,6 +191,18 @@ shells out to `dist/kcmd push`.
 ```bash
 bun push.ts
 ```
+
+Nothing stops you from pointing `kcmd push` straight at a clean OKF bundle, and
+it will appear to work — `title`, `description`, `tags`, and the body all map
+natively. It silently drops `resource`, `type`, `generated`, and `sources`,
+because the layout has no idea those keys are meaningful. The translation step
+exists for exactly that reason.
+
+Useful flags: `kcmd push --validate-only` checks without applying, and
+`--force` overrides the "catalog changed underneath you" guard. Note that the
+`toolbox/mdcode` README is stale here — it documents a `--dry-run` flag and a
+`kcmd status` command, neither of which exists. The real command set is `init`,
+`pull`, `push`, and `mcp`, and `pull` takes no flags at all.
 
 The transformation, so you can reimplement it in another language. Clean OKF on
 disk:
@@ -212,6 +251,13 @@ order so round-trips produce stable diffs.
 `index.md` files carry no frontmatter (SPEC §8) and pass through as body-only
 entries.
 
+The layout also derives hierarchy from your directory structure: each entry's
+`resource.parent` is set to its directory's `index` entry, so the bundle tree
+shows up as a real parent/child hierarchy in the catalog. To make that total,
+`kcmd` **synthesizes an `index` entry for every directory that doesn't have
+one** — see the round-trip note below, because those synthesized entries come
+back as files.
+
 ## Step 6 — Verify the round-trip
 
 ```bash
@@ -219,9 +265,19 @@ bun pull.ts
 git diff --exit-code catalog/
 ```
 
-A pull immediately after a push should leave `catalog/` byte-identical. A
-non-empty diff means the translation is lossy for something in your bundle —
-check it against the limitations below before pushing anything further.
+A pull immediately after a push leaves `catalog/` byte-identical only if every
+directory in your bundle already has an `index.md` and every document has a
+`title`. Otherwise expect two specific diffs, both from `kcmd` rather than from
+the translation:
+
+- **New `index.md` files.** Directories without one get a synthesized `index`
+  entry on push, which comes back as a file on pull.
+- **Added `title:` keys.** When a document has no `title`, `kcmd` falls back to
+  the resource URI, so a document with `resource:` and no `title:` returns with
+  `title:` set to that URI.
+
+Any *other* diff means the translation is lossy for something in your bundle.
+Check it against the limitations below before pushing anything further.
 
 ## Step 7 — Clean up
 
@@ -235,9 +291,12 @@ gcloud dataplex aspect-types delete okf --project $PROJECT --location $LOCATION
 | OKF | Knowledge Catalog |
 |---|---|
 | Bundle root | EntryGroup |
-| File path | Entry name |
-| Markdown body | `dataplex-types.global.overview` aspect |
-| `title`, `description`, `tags` | Documents Layout native fields |
+| File path | Entry name (`.md` stripped, so `tables/orders.md` → `tables/orders`) |
+| Directory | Parent `index` entry, via `resource.parent` |
+| Markdown body | `dataplex-types.global.overview` aspect, `contentType: MARKDOWN` |
+| `title` | `resource.displayName` |
+| `description` | `resource.description` |
+| `tags` | `resource.labels`, each set to `"true"` |
 | `resource` | `catalogEntry.resource.name` |
 | `type` | `okf` aspect → `okf_type` |
 | `generated` | `okf` aspect → `generated {by, at}` |
@@ -263,6 +322,13 @@ preserve them. Add a catch-all field to the aspect if you need them.
 UI, so the bundle graph flattens into disconnected documents. Nothing rewrites
 them. Do not "fix" this by rewriting links in your source bundle — the relative
 form is what makes bundles render on GitHub.
+
+**Tags are stored as labels, and the mapping is not faithful.** Each tag becomes
+an entry label key with the value `"true"`, and only labels whose value is
+exactly `"true"` are read back as tags. So a label set on the entry by anything
+else never appears as a tag, and tag strings have to be valid Dataplex label
+keys — a tag with uppercase characters or spaces will be rejected by the
+service, even though OKF places no such restriction on tags.
 
 **Renames destroy catalog-side state.** Entry identity is the file path, so
 renaming a file deletes one entry and creates another, discarding anything the
