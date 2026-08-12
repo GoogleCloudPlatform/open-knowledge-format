@@ -42,12 +42,25 @@ clean OKF     ──►   pushable form       ──►    entries + aspects
   `bun`.
 
 ```bash
-export PROJECT=<your-project-id>
-export LOCATION=us-central1
-export ENTRY_GROUP=okf_demo
-
 gcloud auth application-default login
-gcloud config set project $PROJECT
+gcloud config set project <your-project-id>
+gcloud config set compute/region us-central1
+```
+
+**Set both, and set them with `gcloud config`.** `kcmd` reads its project and
+location from `gcloud config get-value project` and `gcloud config get-value
+compute/region` — there is no flag and no environment variable. If either is
+unset, every command fails with `Unable to retrieve project, location, or
+token. Ensure gcloud is configured.` The location also has to match the one you
+create the aspect type in, because the aspect is keyed
+`<project>.<location>.okf`.
+
+For convenience in the commands below:
+
+```bash
+export PROJECT=$(gcloud config get-value project)
+export LOCATION=$(gcloud config get-value compute/region)
+export ENTRY_GROUP=okf_demo
 ```
 
 Build the CLI (it is not yet published as a binary):
@@ -58,12 +71,35 @@ cd knowledge-catalog/toolbox/mdcode
 npm install && npm run build      # produces dist/kcmd
 ```
 
+## Run the demo first
+
+`toolbox/mdcode/demo/okf` is a working version of everything below, against a
+14-file GA4 sample bundle. Run it once before adapting any of this to your own
+bundle — it proves the environment and gives you a known-good `catalog.yaml`
+and aspect type to compare against.
+
+```bash
+cd demo/okf
+bun setup.ts     # EntryGroup okf_ga4 + okf aspect type + catalog.yaml
+bun push.ts
+bun pull.ts
+git diff --exit-code catalog/    # should be empty
+bun cleanup.ts
+```
+
+The rest of this document explains what those scripts do, so you can point them
+at your own bundle.
+
 ## Step 1 — Create the EntryGroup
 
 ```bash
 gcloud dataplex entry-groups create $ENTRY_GROUP \
   --project $PROJECT --location $LOCATION
 ```
+
+If you adapt the demo's `setup.ts` instead of running this by hand, note that
+it hardcodes the EntryGroup name `okf_ga4` and reads `okf-aspect.json` from the
+current directory.
 
 ## Step 2 — Create the `okf` aspect type
 
@@ -122,6 +158,9 @@ If you extend the aspect (see [Known limitations](#known-limitations)), keep the
 `catalog.yaml`, but it writes only the `scope:` line — and a manifest with no
 `snapshot.entries` fails on push with `Unknown entry type
 dataplex-types.global.generic in snapshot`. Write the file yourself instead.
+(The demo's `setup.ts` generates it, which is worth doing too if you script
+setup: the `okf` aspect key contains the project and location, so hand-editing
+it is a place to get them wrong.)
 
 `catalog.yaml`, next to your `catalog/` directory:
 
@@ -183,10 +222,23 @@ entry `references/metrics/purchasers`.
 ## Step 5 — Translate and push
 
 Copy [`okf.ts`, `push.ts`, and `pull.ts`][demo] from the demo. `okf.ts` does the
-frontmatter translation; `push.ts` stages every `.md` file through it and then
-shells out to `dist/kcmd push`.
+frontmatter translation; `push.ts` copies `catalog.yaml` and every `.md` file
+through it into `.staging/`, shells out to `dist/kcmd push` with `.staging/` as
+the working directory, then deletes the tree. `pull.ts` is the inverse.
 
 [demo]: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode/demo/okf
+
+Two things to change if you put them anywhere other than a directory two levels
+below `toolbox/mdcode`:
+
+- They locate the binary as `path.resolve(root, '../../dist/kcmd')`.
+- They `import * as kcmd from 'kcmd'`, purely to call
+  `kcmd.gcp.ApiContext.default()` for the project and location that make up the
+  aspect key. Either keep the module resolvable or read the two values from
+  `gcloud config get-value` yourself.
+
+Add `.staging/` to `.gitignore`. The demo also gitignores the generated
+`catalog.yaml`.
 
 ```bash
 bun push.ts
@@ -248,8 +300,13 @@ catalogEntry:
 `sources` move onto the aspect. The body is untouched. Emit keys in a fixed
 order so round-trips produce stable diffs.
 
-`index.md` files carry no frontmatter (SPEC §8) and pass through as body-only
-entries.
+`index.md` files carry no frontmatter (SPEC §8), so the translation passes them
+through untouched in both directions. Going back, that has to be detected
+rather than assumed: `kcmd` always writes frontmatter on pull, so the reverse
+translation emits body only when the entry has no OKF signal at all — no
+`okf_type`, no `generated`, no `sources`, no `resource.name`. Without that
+check, every index file in your bundle would grow a frontmatter block on the
+first pull.
 
 The layout also derives hierarchy from your directory structure: each entry's
 `resource.parent` is set to its directory's `index` entry, so the bundle tree
@@ -266,12 +323,14 @@ git diff --exit-code catalog/
 ```
 
 A pull immediately after a push leaves `catalog/` byte-identical only if every
-directory in your bundle already has an `index.md` and every document has a
-`title`. Otherwise expect two specific diffs, both from `kcmd` rather than from
-the translation:
+directory in your bundle already has an `index.md` and every non-index document
+has a `title`. The demo bundle satisfies both, which is why its round-trip is
+clean; yours may not. Expect two specific diffs, both from `kcmd` rather than
+from the translation:
 
 - **New `index.md` files.** Directories without one get a synthesized `index`
-  entry on push, which comes back as a file on pull.
+  entry on push, which comes back as a file on pull — empty, if nothing gave it
+  a body.
 - **Added `title:` keys.** When a document has no `title`, `kcmd` falls back to
   the resource URI, so a document with `resource:` and no `title:` returns with
   `title:` set to that URI.
@@ -282,9 +341,12 @@ Check it against the limitations below before pushing anything further.
 ## Step 7 — Clean up
 
 ```bash
-gcloud dataplex entry-groups delete $ENTRY_GROUP --project $PROJECT --location $LOCATION
-gcloud dataplex aspect-types delete okf --project $PROJECT --location $LOCATION
+gcloud -q dataplex entry-groups delete $ENTRY_GROUP --project $PROJECT --location $LOCATION
+gcloud -q dataplex aspect-types delete okf --project $PROJECT --location $LOCATION
 ```
+
+Delete the EntryGroup first. The aspect type deletion fails while entries still
+reference it.
 
 ## Frontmatter mapping
 
