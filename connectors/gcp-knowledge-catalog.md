@@ -102,8 +102,10 @@ Any other diff is a key the translation doesn't carry. See
 
 ## 7. Clean up
 
-Deletes the EntryGroup **and** the `okf` aspect type. The aspect type name is
-not parameterized, so don't run this if another bundle is using it.
+Deletes the EntryGroup. The `okf` aspect type is left in place — it is scoped
+to the project, not to your EntryGroup, so every OKF bundle in the project
+shares one. `cleanup.ts` prints the command to remove it once nothing else
+needs it.
 
 ```bash
 bun cleanup.ts
