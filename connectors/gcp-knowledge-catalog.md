@@ -78,10 +78,19 @@ bun push.ts
 
 ```bash
 bun pull.ts
-git diff --exit-code catalog/
+git diff catalog/                 # first pull: YAML normalization
+git add catalog/ && bun pull.ts
+git diff --exit-code catalog/     # now clean
 ```
 
-Two diffs are expected and are not translation loss:
+The first pull rewrites every frontmatter block into `kcmd`'s YAML style —
+sequences indented, timestamps unquoted, mapping keys reordered, lines
+rewrapped at a different width. No values change. Commit that normalization
+once and later pulls are byte-identical, which is what makes `--exit-code`
+worth running. The demo skips this only because its `catalog/` was generated
+by a pull already.
+
+Two content diffs are also expected and are not translation loss:
 
 - Directories without an `index.md` gain one — `kcmd` synthesizes an `index`
   entry for every directory.
@@ -92,6 +101,9 @@ Any other diff is a key the translation doesn't carry. See
 [Limitations](#limitations).
 
 ## 7. Clean up
+
+Deletes the EntryGroup **and** the `okf` aspect type. The aspect type name is
+not parameterized, so don't run this if another bundle is using it.
 
 ```bash
 bun cleanup.ts
@@ -104,6 +116,8 @@ bun cleanup.ts
   `catalogEntry.resource.name`, and `type`, `generated` and `sources` go on the
   `okf` aspect. To carry more, add fields to `okf-aspect.json` and `okf.ts`,
   keeping existing `index` values stable.
+- **Only `.md` files are carried.** Anything else in the bundle — images, HTML,
+  CSV — is ignored in both directions: never pushed, and left alone on pull.
 - **Cross-links resolve to nothing.** Relative paths (§6.1) are stored verbatim.
   Don't rewrite them in your source — the relative form is what renders on
   GitHub.
