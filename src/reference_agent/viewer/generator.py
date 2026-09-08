@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from reference_agent.bundle.document import (
     OKFDocument,
@@ -29,7 +30,7 @@ from reference_agent.bundle.document import (
 )
 
 _INDEX_NAME = "index.md"
-_LINK_RE = re.compile(r"\]\(([^)\s]+\.md)(?:#[A-Za-z0-9_\-]*)?\)")
+_LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
 _TYPE_PALETTE = {
     "BigQuery Dataset": "#8b5cf6",
     "BigQuery Table": "#3b82f6",
@@ -54,7 +55,7 @@ class Concept:
     sources: list[dict[str, Any]] = field(default_factory=list)
     trust_tier: str = "unverified"
     stale: bool = False
-    links_to: list[str] = field(default_factory=list)
+    link_targets: dict[str, str] = field(default_factory=dict)
 
     def to_node(self) -> dict[str, Any]:
         color = _TYPE_PALETTE.get(self.type, _DEFAULT_NODE_COLOR)
@@ -79,24 +80,32 @@ class Concept:
         }
 
 
-def _extract_links(body: str, doc_dir: Path, bundle_root: Path) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
+def _resolve_concept_link(href: str, doc_dir: Path, bundle_root: Path) -> str | None:
+    parsed = urlsplit(href)
+    if parsed.scheme or parsed.netloc or not parsed.path.endswith(".md"):
+        return None
+
     bundle_root_resolved = bundle_root.resolve()
+    target_path = parsed.path
+    base = bundle_root_resolved if target_path.startswith("/") else doc_dir
+    if target_path.startswith("/"):
+        target_path = target_path.lstrip("/")
+
+    try:
+        resolved = (base / target_path).resolve().relative_to(bundle_root_resolved)
+    except ValueError:
+        return None
+
+    return resolved.with_suffix("").as_posix()
+
+
+def _extract_link_targets(body: str, doc_dir: Path, bundle_root: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
     for m in _LINK_RE.finditer(body):
-        target = m.group(1)
-        if "://" in target or target.startswith("/"):
-            continue
-        try:
-            resolved = (doc_dir / target).resolve().relative_to(bundle_root_resolved)
-        except ValueError:
-            continue
-        rel = resolved.as_posix()
-        if rel.endswith(".md"):
-            rel = rel[:-3]
-        if rel and rel not in seen:
-            seen.add(rel)
-            out.append(rel)
+        href = m.group(1)
+        target = _resolve_concept_link(href, doc_dir, bundle_root)
+        if target:
+            out[href] = target
     return out
 
 
@@ -136,7 +145,7 @@ def _walk_concepts(bundle_root: Path) -> list[Concept]:
             sources=[s for s in sources if isinstance(s, dict)],
             trust_tier=trust_tier(fm),
             stale=is_stale(fm),
-            links_to=_extract_links(doc.body or "", md_path.parent, bundle_root),
+            link_targets=_extract_link_targets(doc.body or "", md_path.parent, bundle_root),
         )
         concepts.append(concept)
     return concepts
@@ -147,8 +156,14 @@ def _build_graph(concepts: list[Concept]) -> dict[str, Any]:
     nodes = [c.to_node() for c in concepts]
     edges: list[dict[str, Any]] = []
     seen_edges: set[tuple[str, str]] = set()
+    link_targets: dict[str, dict[str, str]] = {}
     for c in concepts:
-        for target in c.links_to:
+        link_targets[c.id] = {
+            href: target
+            for href, target in c.link_targets.items()
+            if target in ids
+        }
+        for target in link_targets[c.id].values():
             if target == c.id or target not in ids:
                 continue
             key = (c.id, target)
@@ -168,6 +183,7 @@ def _build_graph(concepts: list[Concept]) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "bodies": bodies,
+        "linkTargets": link_targets,
         "types": types,
         "palette": _TYPE_PALETTE,
     }

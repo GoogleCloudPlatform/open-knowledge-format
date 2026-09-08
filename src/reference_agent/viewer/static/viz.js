@@ -263,7 +263,7 @@
     const html = marked.parse(body, { breaks: false, gfm: true });
     const bodyEl = document.getElementById("detail-body");
     bodyEl.innerHTML = html;
-    rewriteInternalLinks(bodyEl);
+    rewriteInternalLinks(bodyEl, bundle.linkTargets?.[conceptId] || {});
 
     const bl = backlinks[conceptId] || [];
     const blSection = document.getElementById("detail-backlinks");
@@ -303,21 +303,19 @@
     return event.at ? `${event.by} · ${event.at}` : String(event.by);
   }
 
-  function rewriteInternalLinks(root) {
+  function rewriteInternalLinks(root, targets) {
     root.querySelectorAll("a[href]").forEach((a) => {
       const href = a.getAttribute("href");
       if (!href) return;
-      if (href.startsWith("/") && href.endsWith(".md")) {
-        const target = href.slice(1, -3);
-        if (nodeIndex[target]) {
-          a.className = "internal";
-          a.setAttribute("href", "javascript:void(0)");
-          a.addEventListener("click", (e) => {
-            e.preventDefault();
-            showDetail(target);
-          });
-          return;
-        }
+      const target = targets[href];
+      if (target && nodeIndex[target]) {
+        a.className = "internal";
+        a.setAttribute("href", "javascript:void(0)");
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          showDetail(target);
+        });
+        return;
       }
       a.className = "external";
       a.setAttribute("target", "_blank");

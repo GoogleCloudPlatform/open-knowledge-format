@@ -148,6 +148,139 @@ def test_cross_links_become_edges(tmp_path: Path):
     assert ("tables/events", "tables/users") in pairs
 
 
+def test_bundle_relative_links_become_edges_and_navigation_targets(tmp_path: Path):
+    bundle = tmp_path / "bundle"
+    _write(
+        bundle / "datasets" / "shop.md",
+        """
+        ---
+        type: BigQuery Dataset
+        title: Shop
+        description: Shop data.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        See [orders](/tables/orders.md).
+        """,
+    )
+    _write(
+        bundle / "tables" / "orders.md",
+        """
+        ---
+        type: BigQuery Table
+        title: Orders
+        description: Orders.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        Order facts.
+        """,
+    )
+    out = tmp_path / "viz.html"
+    generate_visualization(bundle, out)
+    data = _extract_bundle_data(out.read_text(encoding="utf-8"))
+
+    assert {
+        "source": "datasets/shop",
+        "target": "tables/orders",
+    }.items() <= data["edges"][0]["data"].items()
+    assert data["linkTargets"]["datasets/shop"] == {
+        "/tables/orders.md": "tables/orders",
+    }
+
+
+def test_link_resolution_handles_fragments_escaping_paths_and_broken_targets(tmp_path: Path):
+    bundle = tmp_path / "bundle"
+    _write(
+        bundle / "areas" / "sales.md",
+        """
+        ---
+        type: Reference
+        title: Sales
+        description: Sales area.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        Valid relative [orders](../tables/orders.md#schema).
+        Valid absolute [customers](/tables/customers.md#owners).
+        External [site](https://example.com/tables/orders.md).
+        Escaping [secret](../../secret.md).
+        Broken [missing](/tables/missing.md).
+        Not markdown [csv](/tables/orders.csv).
+        """,
+    )
+    _write(
+        bundle / "tables" / "orders.md",
+        """
+        ---
+        type: BigQuery Table
+        title: Orders
+        description: Orders.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        Order facts.
+        """,
+    )
+    _write(
+        bundle / "tables" / "customers.md",
+        """
+        ---
+        type: BigQuery Table
+        title: Customers
+        description: Customers.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        Customer facts.
+        """,
+    )
+    out = tmp_path / "viz.html"
+    generate_visualization(bundle, out)
+    data = _extract_bundle_data(out.read_text(encoding="utf-8"))
+    pairs = {(e["data"]["source"], e["data"]["target"]) for e in data["edges"]}
+
+    assert pairs == {
+        ("areas/sales", "tables/orders"),
+        ("areas/sales", "tables/customers"),
+    }
+    assert data["linkTargets"]["areas/sales"] == {
+        "../tables/orders.md#schema": "tables/orders",
+        "/tables/customers.md#owners": "tables/customers",
+    }
+
+
+def test_duplicate_links_produce_one_edge(tmp_path: Path):
+    bundle = tmp_path / "bundle"
+    _write(
+        bundle / "areas" / "sales.md",
+        """
+        ---
+        type: Reference
+        title: Sales
+        description: Sales area.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        See [orders](../tables/orders.md), [orders again](../tables/orders.md),
+        and [same target](/tables/orders.md#schema).
+        """,
+    )
+    _write(
+        bundle / "tables" / "orders.md",
+        """
+        ---
+        type: BigQuery Table
+        title: Orders
+        description: Orders.
+        generated: {by: 'reference_agent/gemini'}
+        ---
+        Order facts.
+        """,
+    )
+    out = tmp_path / "viz.html"
+    generate_visualization(bundle, out)
+    data = _extract_bundle_data(out.read_text(encoding="utf-8"))
+
+    assert len(data["edges"]) == 1
+    assert data["edges"][0]["data"]["source"] == "areas/sales"
+    assert data["edges"][0]["data"]["target"] == "tables/orders"
+
+
 def test_missing_link_targets_are_skipped(tmp_path: Path):
     bundle = tmp_path / "bundle"
     _write(
