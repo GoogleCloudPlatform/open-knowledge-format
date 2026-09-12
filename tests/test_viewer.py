@@ -148,6 +148,61 @@ def test_cross_links_become_edges(tmp_path: Path):
     assert ("tables/events", "tables/users") in pairs
 
 
+def test_absolute_links_become_edges(tmp_path: Path):
+    # Absolute link is bundle-relative (OKF v0.2 §6.1)
+    bundle = tmp_path / "bundle"
+    _make_bundle(bundle)
+    _write(
+        bundle / "tables" / "orders.md",
+        """
+        ---
+        type: BigQuery Table
+        title: Orders
+        description: Orders table.
+        generated: {by: 'reference_agent/gemini', at: '2026-05-28T00:00:00+00:00'}
+        ---
+        See [users](/tables/users.md) and [DAU](/references/metrics/dau.md).
+        """,
+    )
+    out = tmp_path / "viz.html"
+    generate_visualization(bundle, out)
+    data = _extract_bundle_data(out.read_text(encoding="utf-8"))
+    pairs = {(e["data"]["source"], e["data"]["target"]) for e in data["edges"]}
+    assert ("tables/orders", "tables/users") in pairs
+    assert ("tables/orders", "references/metrics/dau") in pairs
+
+
+def test_absolute_and_relative_links_to_the_same_target_do_not_duplicate(tmp_path: Path):
+    bundle = tmp_path / "bundle"
+    _write(
+        bundle / "tables" / "a.md",
+        """
+        ---
+        type: BigQuery Table
+        title: A
+        generated: {by: 'reference_agent/gemini', at: '2026-05-28T00:00:00+00:00'}
+        ---
+        See [b](/tables/b.md) and again [b](b.md).
+        """,
+    )
+    _write(
+        bundle / "tables" / "b.md",
+        """
+        ---
+        type: BigQuery Table
+        title: B
+        generated: {by: 'reference_agent/gemini', at: '2026-05-28T00:00:00+00:00'}
+        ---
+        Body.
+        """,
+    )
+    out = tmp_path / "viz.html"
+    generate_visualization(bundle, out)
+    data = _extract_bundle_data(out.read_text(encoding="utf-8"))
+    edges = [(e["data"]["source"], e["data"]["target"]) for e in data["edges"]]
+    assert edges == [("tables/a", "tables/b")]
+
+
 def test_missing_link_targets_are_skipped(tmp_path: Path):
     bundle = tmp_path / "bundle"
     _write(
@@ -159,7 +214,7 @@ def test_missing_link_targets_are_skipped(tmp_path: Path):
         description: Has a dangling link.
         generated: {by: 'reference_agent/gemini', at: '2026-05-28T00:00:00+00:00'}
         ---
-        Links to [missing](missing.md).
+        Links to [missing](missing.md) and [missing absolute](/missing.md).
         """,
     )
     out = tmp_path / "viz.html"
@@ -167,6 +222,28 @@ def test_missing_link_targets_are_skipped(tmp_path: Path):
     data = _extract_bundle_data(out.read_text(encoding="utf-8"))
     assert data["edges"] == []
     assert len(data["nodes"]) == 1
+
+
+def test_absolute_link_cannot_escape_the_bundle_root(tmp_path: Path):
+    # Absolute link is bundle-relative (OKF v0.2 §6.1)
+    bundle = tmp_path / "bundle"
+    _write(
+        bundle / "a.md",
+        """
+        ---
+        type: Reference
+        title: A
+        generated: {by: 'reference_agent/gemini', at: '2026-05-28T00:00:00+00:00'}
+        ---
+        Escaping to [outside](/../outside.md).
+        """,
+    )
+    _write(tmp_path / "outside.md", "---\ntype: Reference\n---\nBody.\n")
+    out = tmp_path / "viz.html"
+    generate_visualization(bundle, out)
+    data = _extract_bundle_data(out.read_text(encoding="utf-8"))
+    assert data["edges"] == []
+    assert {n["data"]["id"] for n in data["nodes"]} == {"a"}
 
 
 def test_node_colors_match_palette(tmp_path: Path):
