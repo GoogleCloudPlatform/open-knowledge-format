@@ -17,7 +17,7 @@ sources:
     usage_count: 1240
     last_modified: 2026-06-15T00:00:00Z
   - id: revenue-policy
-    resource: policies/revenue-recognition.md
+    resource: /policies/revenue-recognition.md
     title: Revenue Recognition Policy (FY2026)
     author: human:jsmith@acme
     last_modified: 2026-06-15T00:00:00Z

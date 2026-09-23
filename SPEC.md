@@ -481,7 +481,7 @@ case it is not a path. Each path-valued field accepts:
 A `references/` subdirectory conventionally mirrors external material, run
 instructions, or code as first-class concepts within the bundle. Sources,
 executors, and attesters commonly point into it (for example
-`references/attesters/revenue.py`). It is a naming convention, not a
+`/references/attesters/revenue.py`). It is a naming convention, not a
 requirement.
 
 ---
@@ -617,10 +617,10 @@ runtime: bigquery
 parameters:
   - { name: year, type: integer, required: true }
 executor:
-  resource: references/skills/run-on-bq.md
+  resource: /references/skills/run-on-bq.md
   receipt: [job_id, executed_sql, result]
 attester:
-  resource: references/attesters/revenue.py
+  resource: /references/attesters/revenue.py
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }
 verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }
 stale_after: 2026-09-23T00:00:00Z
@@ -654,7 +654,7 @@ Provide the computation in one of two ways:
 
 ```yaml
 runtime: bigquery
-computation: references/computations/lib/revenue.sql
+computation: /references/computations/lib/revenue.sql
 parameters:
   - { name: year, type: integer, required: true }
 ```

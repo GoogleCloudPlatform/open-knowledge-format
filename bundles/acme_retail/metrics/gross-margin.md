@@ -14,12 +14,12 @@ not:
     instead: "revenue minus full COGS (product cost + inbound fulfillment + outbound shipping + payment fees)"
 sources:
   - id: margin-standard
-    resource: policies/margin-standard.md
+    resource: /policies/margin-standard.md
     title: Cost Allocation & Margin Standard (FY2026)
     author: human:jsmith@acme
     last_modified: 2026-06-15T00:00:00Z
   - id: revenue-policy
-    resource: policies/revenue-recognition.md
+    resource: /policies/revenue-recognition.md
     title: Revenue Recognition Policy (FY2026)
     author: human:jsmith@acme
     last_modified: 2026-06-15T00:00:00Z
