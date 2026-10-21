@@ -57,6 +57,49 @@ def test_fetch_and_parse_extracts_title_links_markdown():
     assert not any(l.startswith("javascript:") for l in page.links)
 
 
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        ('<a href="/guide#schema">Schema</a>', "https://example.com/guide"),
+        ('<a href="/search?a=1&amp;b=2">Search</a>', "https://example.com/search?a=1&b=2"),
+        ("<a href=/guide>Guide</a>", "https://example.com/guide"),
+    ],
+)
+def test_fetch_and_parse_handles_html_link_forms(html, expected):
+    with patch("reference_agent.web.fetcher.urlopen") as urlopen:
+        urlopen.return_value = _mock_response(html.encode())
+        page = fetch_and_parse("https://example.com/page")
+
+    assert page.links == [expected]
+
+
+def test_fetch_and_parse_filters_and_deduplicates_links():
+    html = b"""
+    <!-- <a href="/comment">Not a link</a> -->
+    <script>const example = '<a href="/script">Example</a>';</script>
+    <a data-href="/data">Not a link</a>
+    <a href>Missing value</a>
+    <a href="">Empty</a>
+    <a href="#section">Same page</a>
+    <a href="mailto:hello@example.com">Email</a>
+    <a href="javascript:void(0)">Script</a>
+    <a href=" /guide#one ">Guide</a>
+    <a href="https://example.com/guide#two">Same guide</a>
+    <a href="/search?a=1&amp;b=2">Search</a>
+    <a href="/search?a=1&#38;b=2">Same search</a>
+    <A HREF=//example.com/other>Other</A>
+    """
+    with patch("reference_agent.web.fetcher.urlopen") as urlopen:
+        urlopen.return_value = _mock_response(html)
+        page = fetch_and_parse("https://example.com/page")
+
+    assert page.links == [
+        "https://example.com/guide",
+        "https://example.com/search?a=1&b=2",
+        "https://example.com/other",
+    ]
+
+
 def test_fetch_and_parse_rejects_non_html():
     with patch("reference_agent.web.fetcher.urlopen") as urlopen:
         urlopen.return_value = _mock_response(b"{}", content_type="application/json")
