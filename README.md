@@ -1,5 +1,11 @@
 # Open Knowledge Format (OKF)
 
+> [!WARNING]
+> **This repository is deprecated.** OKF development has moved to
+> [open-knowledge-format/open-knowledge-format](https://github.com/open-knowledge-format/open-knowledge-format),
+> which has the latest spec (v0.3), bundles, and tooling. This repository
+> is no longer updated; please open issues and pull requests there.
+
 ### 📖 [Read the Open Knowledge Format v0.2 specification → SPEC.md](SPEC.md)
 
 > **This repository is primarily about the [Open Knowledge Format
