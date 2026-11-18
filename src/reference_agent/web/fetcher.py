@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from urllib.parse import urldefrag, urljoin, urlparse
 from urllib.request import Request, urlopen
 
@@ -25,7 +26,6 @@ _USER_AGENT = "okf-reference-agent/0.1 (+https://github.com/amirhormati/open-kno
 _MAX_MARKDOWN_BYTES = 40 * 1024
 
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-_HREF_RE = re.compile(r"""href\s*=\s*["']([^"'#\s]+)["']""", re.IGNORECASE)
 
 
 class FetchError(Exception):
@@ -48,12 +48,26 @@ def _extract_title(html: str) -> str | None:
     return raw or None
 
 
+class _LinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if name == "href" and value is not None:
+                self.hrefs.append(value)
+
+
 def _extract_links(html: str, base_url: str) -> list[str]:
+    parser = _LinkParser()
+    parser.feed(html)
+    parser.close()
     seen: set[str] = set()
     out: list[str] = []
-    for match in _HREF_RE.finditer(html):
-        href = match.group(1).strip()
-        if not href:
+    for value in parser.hrefs:
+        href = value.strip()
+        if not href or href.startswith("#"):
             continue
         scheme = urlparse(href).scheme.lower()
         if scheme and scheme not in ("http", "https", ""):
