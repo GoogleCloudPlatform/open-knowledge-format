@@ -68,9 +68,11 @@ class OKFDocument:
 
         fm_text = "\n".join(lines[1:end_idx])
         try:
-            fm = yaml.load(fm_text, Loader=_Loader) or {}
+            fm = yaml.load(fm_text, Loader=_Loader)
         except yaml.YAMLError as e:
             raise OKFDocumentError(f"Invalid YAML in frontmatter: {e}") from e
+        if fm is None:
+            fm = {}
         if not isinstance(fm, dict):
             raise OKFDocumentError("Frontmatter must be a YAML mapping")
 

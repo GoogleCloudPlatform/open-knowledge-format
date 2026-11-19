@@ -65,6 +65,19 @@ def test_unterminated_frontmatter_raises():
         OKFDocument.parse(src)
 
 
+@pytest.mark.parametrize("frontmatter", ["false", "0", "[]", "''", "true", "1", "[type]"])
+def test_parse_rejects_non_mapping_frontmatter(frontmatter):
+    with pytest.raises(OKFDocumentError, match="Frontmatter must be a YAML mapping"):
+        OKFDocument.parse(f"---\n{frontmatter}\n---\n\nBody text.\n")
+
+
+@pytest.mark.parametrize("frontmatter", ["", "# comment only", "null", "{}"])
+def test_parse_accepts_empty_frontmatter(frontmatter):
+    doc = OKFDocument.parse(f"---\n{frontmatter}\n---\n\nBody text.\n")
+    assert doc.frontmatter == {}
+    assert doc.body == "Body text."
+
+
 def test_validate_rejects_missing_type():
     doc = OKFDocument(frontmatter={"title": "Y"})
     with pytest.raises(OKFDocumentError) as exc:
