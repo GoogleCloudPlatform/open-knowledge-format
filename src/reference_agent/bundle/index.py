@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from reference_agent.bundle.document import OKFDocument
 from reference_agent.bundle.synthesizer import synthesize_description
@@ -30,6 +30,21 @@ def _load_doc(path: Path) -> OKFDocument | None:
         return OKFDocument.parse(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _root_okf_version(index_path: Path) -> Any:
+    """Return the `okf_version` an existing bundle-root index.md declares.
+
+    OKF v0.2 §8 permits frontmatter in an index.md only at the bundle root,
+    and only for `okf_version` (§12). Regenerating the listing carries that
+    declaration forward instead of dropping it.
+    """
+    if not index_path.exists():
+        return None
+    doc = _load_doc(index_path)
+    if doc is None:
+        return None
+    return doc.frontmatter.get("okf_version")
 
 
 def _build_index_text(entries: list[tuple[str, str, str, str]]) -> str:
@@ -101,7 +116,14 @@ def regenerate_indexes(
             continue
 
         index_path = directory / _INDEX_FILE
-        index_path.write_text(_build_index_text(entries), encoding="utf-8")
+        text = _build_index_text(entries)
+        if directory == bundle_root:
+            okf_version = _root_okf_version(index_path)
+            if okf_version is not None:
+                text = OKFDocument(
+                    frontmatter={"okf_version": okf_version}, body=text
+                ).serialize()
+        index_path.write_text(text, encoding="utf-8")
         written.append(index_path)
 
         if directory == bundle_root:

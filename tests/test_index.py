@@ -106,3 +106,27 @@ def test_regenerate_single_child_reuses_description(tmp_path: Path):
     root_index = (root / "index.md").read_text(encoding="utf-8")
     assert "(datasets/index.md) - The only dataset in this bundle." in root_index
     assert call_count == 0
+
+
+def test_regenerate_preserves_root_okf_version(tmp_path: Path):
+    root = tmp_path / "bundle"
+    _write_doc(
+        root / "tables" / "users.md",
+        "BigQuery Table",
+        "users",
+        "Per-user dimension.",
+    )
+    (root / "index.md").write_text(
+        '---\nokf_version: "0.2"\n---\n\n# Stale listing\n', encoding="utf-8"
+    )
+
+    regenerate_indexes(root, model="stub", synthesize=_stub_synth)
+
+    root_index = OKFDocument.parse((root / "index.md").read_text(encoding="utf-8"))
+    assert root_index.frontmatter == {"okf_version": "0.2"}
+    assert "# Stale listing" not in root_index.body
+    assert "(tables/index.md) - Per-user dimension." in root_index.body
+
+    # Only the bundle root may carry frontmatter (OKF v0.2 §8); leaf indexes stay bare.
+    tables_index = (root / "tables" / "index.md").read_text(encoding="utf-8")
+    assert tables_index.startswith("# BigQuery Table")
