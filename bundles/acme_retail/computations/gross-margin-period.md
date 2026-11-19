@@ -8,10 +8,10 @@ parameters:
   - { name: period_start, type: date, required: true }
   - { name: period_end, type: date, required: true }
 executor:
-  resource: skills/run-on-bq.md
+  resource: /skills/run-on-bq.md
   receipt: [job_id, executed_sql, result]
 attester:
-  resource: attesters/sql_equality.py
+  resource: /attesters/sql_equality.py
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-30T14:00:00Z }
 verified:
   - { by: human:jsmith@acme, at: 2026-07-01T09:00:00Z }
@@ -19,12 +19,12 @@ status: stable
 stale_after: 2026-12-31T00:00:00Z
 sources:
   - id: margin-standard
-    resource: policies/margin-standard.md
+    resource: /policies/margin-standard.md
     title: Cost Allocation & Margin Standard (FY2026)
     author: human:jsmith@acme
     last_modified: 2026-06-15T00:00:00Z
   - id: revenue-policy
-    resource: policies/revenue-recognition.md
+    resource: /policies/revenue-recognition.md
     title: Revenue Recognition Policy (FY2026)
     author: human:jsmith@acme
     last_modified: 2026-06-15T00:00:00Z
