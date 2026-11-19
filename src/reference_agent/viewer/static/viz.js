@@ -263,7 +263,7 @@
     const html = marked.parse(body, { breaks: false, gfm: true });
     const bodyEl = document.getElementById("detail-body");
     bodyEl.innerHTML = html;
-    rewriteInternalLinks(bodyEl);
+    rewriteInternalLinks(bodyEl, conceptId);
 
     const bl = backlinks[conceptId] || [];
     const blSection = document.getElementById("detail-backlinks");
@@ -303,21 +303,38 @@
     return event.at ? `${event.by} · ${event.at}` : String(event.by);
   }
 
-  function rewriteInternalLinks(root) {
+  function resolveRelativeLink(baseConceptId, href) {
+    const withoutExt = href.slice(0, -3);
+    const stack = baseConceptId.split("/").slice(0, -1);
+    for (const part of withoutExt.split("/")) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") {
+        stack.pop();
+        continue;
+      }
+      stack.push(part);
+    }
+    return stack.join("/");
+  }
+
+  function rewriteInternalLinks(root, currentConceptId) {
     root.querySelectorAll("a[href]").forEach((a) => {
       const href = a.getAttribute("href");
       if (!href) return;
+      let target = null;
       if (href.startsWith("/") && href.endsWith(".md")) {
-        const target = href.slice(1, -3);
-        if (nodeIndex[target]) {
-          a.className = "internal";
-          a.setAttribute("href", "javascript:void(0)");
-          a.addEventListener("click", (e) => {
-            e.preventDefault();
-            showDetail(target);
-          });
-          return;
-        }
+        target = href.slice(1, -3);
+      } else if (!href.includes("://") && href.endsWith(".md")) {
+        target = resolveRelativeLink(currentConceptId, href);
+      }
+      if (target !== null && nodeIndex[target]) {
+        a.className = "internal";
+        a.setAttribute("href", "javascript:void(0)");
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          showDetail(target);
+        });
+        return;
       }
       a.className = "external";
       a.setAttribute("target", "_blank");
