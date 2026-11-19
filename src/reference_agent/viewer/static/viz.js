@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 (function () {
+  if (window.markedFootnote) { marked.use(markedFootnote()); }
   const bundle = window.BUNDLE;
   const bundleName = window.BUNDLE_NAME;
   document.title = `${bundleName} — OKF Viewer`;
